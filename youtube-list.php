@@ -1,58 +1,44 @@
 <?php
-require_once 'vendor/autoload.php';
 
-$self = "http://{$_SERVER['HTTP_HOST']}/oauth-youtube-google/index.php";
-$success = "$self?mode=success";
-$secretsJson = 'client_secret.json';
-
-$p = $_GET;
-$mode = @$p['mode'];
-
-$client = new Google_Client();
-$_SESSION['client'] = $client;
-$client->setAuthConfig($secretsJson);
-$client->setScopes("https://www.googleapis.com/auth/plus.profile.emails.read");
-$client->addScope('https://www.googleapis.com/auth/youtube');
-$client->addScope(Google_Service_Plus::USERINFO_PROFILE);
-$client->setAccessType('offline');
-$client->setApprovalPrompt('force');
-$client->setRedirectUri($success);
-$authUrl = $client->createAuthUrl();
-echo "<p><a href='$authUrl'>Auth</a></p>";
-echo "<pre>";
-
+// Call set_include_path() as needed to point to your client library.
+require_once __DIR__ . '/vendor/autoload.php';
+$dotenv = new Dotenv\Dotenv(__DIR__);
+$dotenv->load();
 session_start();
 
-if ($mode == 'clear') {
- $_SESSION['accessToken'] = '';
-}
-elseif ($mode == 'success') {
- echo "<p>SUCCESS: {$p['code']}</p>";
- $client->authenticate($p['code']);
- $accessToken = $client->getAccessToken();
- if ($accessToken) { $_SESSION['accessToken'] = $accessToken; }
-}
+/*
+ * You can acquire an OAuth 2.0 client ID and client secret from the
+ * Google Developers Console <https://console.developers.google.com/>
+ * For more information about using OAuth 2.0 to access Google APIs, please see:
+ * <https://developers.google.com/youtube/v3/guides/authentication>
+ * Please ensure that you have enabled the YouTube Data API for your project.
+ */
+$OAUTH2_CLIENT_ID = $_ENV['CLIENT_ID'];
+$OAUTH2_CLIENT_SECRET = $_ENV['CLIENT_SECRET'];
 
-if (@$_SESSION['accessToken']) {
- // アクセストークンを出力
- var_export($_SESSION['accessToken']);
- $client->setAccessToken($_SESSION['accessToken']);
- $plus = new Google_Service_Plus($client);
- $me = $plus->people->get('me');
- echo "<p><img src='{$me['image']['url']}'></p>";
- echo "<p>NAME: {$me['displayName']}</p>";
- echo "<p>MAIL: {$me->emails[0]->value}</p>";
- echo "<p>GENDER: {$me['gender']}</p>";
- echo "<p>URL: {$me['url']}</p>";
-}
+$client = new Google_Client();
+$client->setClientId($OAUTH2_CLIENT_ID);
+$client->setClientSecret($OAUTH2_CLIENT_SECRET);
+$client->setScopes('https://www.googleapis.com/auth/youtube');
+$redirect = filter_var('http://' . $_SERVER['HTTP_HOST'] . $_SERVER['PHP_SELF'],
+  FILTER_SANITIZE_URL);
+$client->setRedirectUri($redirect);
 
-echo "</pre>";
-
+// Define an object that will be used to make all API requests.
 $youtube = new Google_Service_YouTube($client);
 
+if (isset($_GET['code'])) {
+  if (strval($_SESSION['state']) !== strval($_GET['state'])) {
+    die('The session state did not match.');
+  }
 
-if (isset($_SESSION['accessToken'])) {
-  $client->setAccessToken($_SESSION['accessToken']);
+  $client->authenticate($_GET['code']);
+  $_SESSION['token'] = $client->getAccessToken();
+  header('Location: ' . $redirect);
+}
+
+if (isset($_SESSION['token'])) {
+  $client->setAccessToken($_SESSION['token']);
 }
 
 // Check to ensure that the access token was successfully acquired.
@@ -66,7 +52,6 @@ if ($client->getAccessToken()) {
 
     $htmlBody = '';
     $count=0;
-    $res_con=0;
     foreach ($channelsResponse['items'] as $channel) {
       // Extract the unique playlist ID that identifies the list of videos
       // uploaded to the channel, and then call the playlistItems.list method
@@ -85,7 +70,7 @@ if ($client->getAccessToken()) {
         PV<input type="checkbox" name="tag" value=1>
         you tuber<input type="checkbox" name="tag" value=2>
         GAME<input type="checkbox" name="tag" value=3>
-        <input type="submit" name=%s value="登録">
+        <input type="submit" name=send%s value="登録">
         <li>%s (%s)</li>
         </form>', $count , $playlistItem['snippet']['title'],
           $playlistItem['snippet']['resourceId']['videoId']);
@@ -94,8 +79,7 @@ if ($client->getAccessToken()) {
                   frameborder="0" allow="autoplay; encrypted-media"
                   allowfullscreen></iframe></li>',
                   $playlistItem['snippet']['resourceId']['videoId']);
-        $mvid=$playlistItem['snippet']['resourceId']['videoId'];
-        $res_con = $count;
+        $mvid[$count]=$playlistItem['snippet']['resourceId']['videoId'];
         $count=$count+1;
       }
       $htmlBody .= '</ul>';
@@ -108,24 +92,33 @@ if ($client->getAccessToken()) {
       htmlspecialchars($e->getMessage()));
   }
 
-  $_SESSION['accessToken'] = $client->getAccessToken();
-}
+  $_SESSION['token'] = $client->getAccessToken();
+} else {
+  $state = mt_rand();
+  $client->setState($state);
+  $_SESSION['state'] = $state;
 
- ?>
- <!doctype html>
+  $authUrl = $client->createAuthUrl();
+  $htmlBody = <<<END
+  <h3>Authorization Required</h3>
+  <p>You need to <a href="$authUrl">authorize access</a> before proceeding.<p>
+END;
+}
+?>
+
+<!doctype html>
 <html>
   <head>
     <title>My Uploads</title>
   </head>
   <body>
-    <p>-------YouTube List--------</p>
     <?=$htmlBody;
     if(isset($_POST["tag"])){
-      if(isset($_POST[$res_con])){
-        $mvid=$mvid;
+      if(isset($_POST["send0"])){
+        $mvid=$mvid[0];
         $tag=$_POST["tag"];
       }
-      $pdo = new PDO( "mysql:dbname=youtube_db;host=localhost;charset=utf8mb4","root", "");
+      $pdo = new PDO( "mysql:dbname=mvlist;host=localhost;charset=utf8mb4","root", "");
     if(!$pdo){echo "接続失敗";}
 
     $sent = $pdo -> prepare("INSERT INTO movie(plid , mvid , tag)values(?,?,?)");
@@ -140,7 +133,5 @@ if ($client->getAccessToken()) {
     else{echo "登録完了";}
 }else{echo "タグ付けなし！";}
     ?>
-    <p>-------Select List--------</p>
-
   </body>
 </html>
