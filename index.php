@@ -3,7 +3,7 @@ require_once 'vendor/autoload.php';
 
 $self = "http://{$_SERVER['HTTP_HOST']}/oauth-youtube-google/index.php";
 $success = "$self?mode=success";
-$secretsJson = 'client_secret_103761046364-u33ih5olbn34g9qh2ubtf7sm7bl6tc4m.apps.googleusercontent.com.json';
+$secretsJson = 'client_secret.json';
 
 $p = $_GET;
 $mode = @$p['mode'];
